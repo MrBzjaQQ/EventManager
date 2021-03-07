@@ -1,7 +1,11 @@
-﻿using System.Threading.Tasks;
+﻿using System.Security.Claims;
+using System.Threading.Tasks;
 using AutoMapper;
 using EventManager.Dtos.User;
+using EventManager.Exceptions.Login;
 using EventManager.Models;
+using EventManager.Options.Tokens.Jwt;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -9,22 +13,23 @@ using Microsoft.Extensions.Logging;
 namespace EventManager.Controllers
 {
     [ApiController]
-    public class UserController: ControllerBase
+    public class UserController : ControllerBase
     {
         private readonly UserManager<UserModel> _userManager;
-        private readonly SignInManager<UserModel> _signInManager;
         private readonly ILogger<UserController> _logger;
         private readonly IMapper _mapper;
+        private readonly IJwtAuthenticationManager _authenticationManager;
 
         public UserController(
-            UserManager<UserModel> userManager, 
-            SignInManager<UserModel> signInManager, 
+            UserManager<UserModel> userManager,
+            SignInManager<UserModel> signInManager,
             ILogger<UserController> logger,
+            IJwtAuthenticationManager authenticationManager,
             IMapper mapper
-            )
+        )
         {
             _userManager = userManager;
-            _signInManager = signInManager;
+            _authenticationManager = authenticationManager;
             _logger = logger;
             _mapper = mapper;
         }
@@ -44,8 +49,53 @@ namespace EventManager.Controllers
             {
                 ModelState.AddModelError(error.Code, error.Description);
             }
+
             return BadRequest(ModelState);
-            
+        }
+
+        [HttpPost]
+        [Route("/signin")]
+        public async Task<ActionResult> SignIn(UserLoginDto loginUser)
+        {
+            // TODO: fix logging
+            try
+            {
+                UserLoginSuccessDto result = await _authenticationManager.Authenticate(loginUser);
+                return Ok(result);
+            }
+            catch (AuthenticationFailedException ex)
+            {
+                ModelState.AddModelError("error", ex.Message);
+                _logger.LogDebug(ex.Message);
+                return BadRequest(ModelState);
+            }
+            catch (JwtTokenCreationException ex)
+            {
+                foreach (var err in ex.Errors)
+                {
+                    _logger.LogError(err.Code, err.Description);
+                    ModelState.AddModelError(err.Code, err.Description);
+                }
+
+                return BadRequest(ModelState);
+            }
+        }
+
+        [HttpPost]
+        [Route("/whoami")]
+        [Authorize]
+        public async Task<IActionResult> WhoAmI()
+        {
+            // TODO: returns 401
+            if (ModelState.IsValid)
+            {
+                var token = Request.Headers["Authorization"].ToString().Replace("Bearer ", "");
+                UserModel user = await _authenticationManager.GetUserByToken(token);
+                return Ok(_mapper.Map<UserReadDto>(user));
+                return Ok();
+            }
+
+            return BadRequest(ModelState);
         }
     }
 }

@@ -1,21 +1,16 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using EventManager.Data;
 using EventManager.Models;
-using EventManager.Options.Tokens;
+using EventManager.Options.Tokens.Jwt;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.HttpsPolicy;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 
@@ -33,7 +28,8 @@ namespace EventManager
         // This method gets called by the runtime. Use this method to add services to the container.
         public void ConfigureServices(IServiceCollection services)
         {
-
+            var jwtOptions = new JwtOptions(this.Configuration);
+            
             services.AddControllers();
 
             services.AddDbContext<EventManagerContext>(options =>
@@ -41,21 +37,33 @@ namespace EventManager
             
             services.AddIdentity<UserModel, IdentityRole>().AddEntityFrameworkStores<EventManagerContext>();
             
-            services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            services.AddAuthentication(options =>
+                {
+                    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+                })
                 .AddJwtBearer(options =>
                 {
                     options.RequireHttpsMetadata = false;
+                    options.SaveToken = true;
                     options.TokenValidationParameters = new TokenValidationParameters
                     {
                         ValidateIssuer = true,
-                        ValidIssuer = BearerOptions.ISSUER,
+                        ValidIssuer = jwtOptions.ISSUER,
                         ValidateAudience = true,
-                        ValidAudience = BearerOptions.AUDIENCE,
+                        ValidAudience = jwtOptions.AUDIENCE,
                         ValidateLifetime = true,
-                        IssuerSigningKey = BearerOptions.GetSymmetricSecurityKey(),
+                        IssuerSigningKey = jwtOptions.GetSymmetricSecurityKey(),
                         ValidateIssuerSigningKey = true,
                     };
                 });
+
+            services.AddAuthorization(options =>
+            {
+                var defaultAuthPolicyBuilder = new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme).RequireAuthenticatedUser();
+
+                options.DefaultPolicy = defaultAuthPolicyBuilder.Build();
+            });
             
             services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
             
@@ -63,6 +71,10 @@ namespace EventManager
             {
                 c.SwaggerDoc("v1", new OpenApiInfo { Title = "EventManager", Version = "v1" });
             });
+
+            services.AddSingleton<IJwtOptions>(jwtOptions);
+
+            services.AddScoped<IJwtAuthenticationManager, JwtAuthenticationManager>();
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -79,6 +91,7 @@ namespace EventManager
 
             app.UseRouting();
 
+            app.UseAuthentication();
             app.UseAuthorization();
 
             app.UseEndpoints(endpoints =>
